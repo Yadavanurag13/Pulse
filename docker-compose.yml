@@ -1,0 +1,48 @@
+version: '3.8' # Specify Docker Compose file format version
+
+services:
+  # PostgreSQL Database Service
+  postgres:
+    image: postgres:16-alpine # Use the same Alpine image for consistency and size
+    container_name: health-tracker-postgres
+    restart: unless-stopped # Always restart unless explicitly stopped
+    environment:
+      POSTGRES_DB: usersdb
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432" # Expose PostgreSQL port to host for external access (e.g., pgAdmin)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # Persist data to a named volume
+    healthcheck: # Define a health check for the database
+      test: ["CMD-SHELL", "pg_isready -U user -d usersdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # User Service
+  user-service:
+    build:
+      context: ./services/user-service # Path to your Dockerfile for user-service
+      dockerfile: Dockerfile
+    container_name: health-tracker-user-service
+    restart: unless-stopped
+    ports:
+      - "8080:8080" # Expose user-service API port to host
+    environment:
+      # Database connection details for user-service
+      DB_HOST: postgres # Use the service name defined in docker-compose.yml
+      DB_PORT: 5432
+      DB_USER: user
+      DB_PASSWORD: password
+      DB_NAME: usersdb
+      PORT: 8080 # Port for the Go application inside the container
+    depends_on:
+      postgres:
+        condition: service_healthy # Ensure postgres is healthy before starting user-service
+    # Optional: Mount your Go source code for live reloading during development (for future consideration)
+    # volumes:
+    #   - ./services/user-service:/app
+
+volumes:
+  postgres_data: # Define the named volume for PostgreSQL data persistence
