@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings" // Used for parsing URL paths
 
+	"golang.org/x/crypto/bcrypt"
 	"health-tracker-project/services/user-service/internal/models"
 	"health-tracker-project/services/user-service/internal/repository"
 )
@@ -64,6 +65,14 @@ func (h *UserHandler) GetUserByEmailHandler(w http.ResponseWriter, r *http.Reque
 	h.GetUserByEmail(w, r)
 }
 
+func hashPassword(password string) (string, error) {
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hashedPassword), nil
+}
+
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -81,7 +90,15 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.userRepo.CreateUser(&user)
+	hashedPassword, err := hashPassword(user.Password)
+	if err != nil {
+		log.Printf("Error hashing password: %v", err)
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		return
+	}
+	user.Password = hashedPassword 
+
+	err = h.userRepo.CreateUser(&user)
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate key value violates unique constraint") {
 			http.Error(w, "User with this email already exists", http.StatusConflict)
@@ -192,7 +209,15 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 
-	err := h.userRepo.UpdateUser(&user)
+	hashedPassword, err := hashPassword(user.Password)
+	if err != nil {
+		log.Printf("Error hashing password: %v", err)
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		return
+	}
+	user.Password = hashedPassword 
+
+	err = h.userRepo.UpdateUser(&user)
 	if err != nil {
 		log.Printf("Error updating user: %v", err)
 		http.Error(w, "Failed to update user", http.StatusInternalServerError)
