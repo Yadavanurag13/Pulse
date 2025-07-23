@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings" // Used for parsing URL paths
 
+	"golang.org/x/crypto/bcrypt"
 	"health-tracker-project/services/user-service/internal/models"
 	"health-tracker-project/services/user-service/internal/repository"
 )
@@ -36,7 +37,7 @@ func (h *UserHandler) UserItemHandler(w http.ResponseWriter, r *http.Request) {
 	// r.URL.Path could be "/v1/users/some-id"
 	// We need to get the part after the last slash.
 	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) < 1 { // Should at least have "", "v1", "users", "ID"
+	if len(parts) < 2 { // Should at least have "", "v1", "users", "ID"
 		http.Error(w, "Invalid URL path", http.StatusBadRequest)
 		return
 	}
@@ -61,7 +62,19 @@ func (h *UserHandler) UserItemHandler(w http.ResponseWriter, r *http.Request) {
 
 // GetUserByEmailHandler handles /users/by-email?email=...
 func (h *UserHandler) GetUserByEmailHandler(w http.ResponseWriter, r *http.Request) {
+	 if r.Method != http.MethodGet {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
 	h.GetUserByEmail(w, r)
+}
+
+func hashPassword(password string) (string, error) {
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hashedPassword), nil
 }
 
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
@@ -70,18 +83,31 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var user models.User
-	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
+	var req models.CreateUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
-	if user.Name == "" || user.Email == "" || user.Password == "" {
+	if req.Name == "" || req.Email == "" || req.Password == "" {
 		http.Error(w, "Name, email, and password are required", http.StatusBadRequest)
 		return
 	}
 
-	err := h.userRepo.CreateUser(&user)
+	hashedPassword, err := hashPassword(req.Password)
+	if err != nil {
+		log.Printf("Error hashing password: %v", err)
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		return
+	}
+
+	user := &models.User{
+		Name:     req.Name,
+		Email:    req.Email,
+		Password: hashedPassword,
+	}
+
+	err = h.userRepo.CreateUser(user)
 	if err != nil {
 		if strings.Contains(err.Error(), "duplicate key value violates unique constraint") {
 			http.Error(w, "User with this email already exists", http.StatusConflict)
@@ -92,9 +118,10 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userResp := models.ToUserResponse(user)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(user)
+	json.NewEncoder(w).Encode(userResp)
 	log.Printf("User created: %s", user.ID)
 }
 
@@ -118,9 +145,10 @@ func (h *UserHandler) GetUserByID(w http.ResponseWriter, r *http.Request, id str
 		http.Error(w, "Failed to get user", http.StatusInternalServerError)
 		return
 	}
+	userResp := models.ToUserResponse(user)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(user)
+	json.NewEncoder(w).Encode(userResp)
 	log.Printf("User retrieved: %s", user.ID)
 }
 
@@ -136,10 +164,14 @@ func (h *UserHandler) GetAllUsers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to get users", http.StatusInternalServerError)
 		return
 	}
-
+	
+	usersResp := make([]models.UserResponse, len(users))
+	for i, user := range users {
+		usersResp[i] = models.ToUserResponse(&user)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(users)
+	json.NewEncoder(w).Encode(usersResp)
 	log.Printf("Retrieved %d users", len(users))
 }
 
@@ -165,10 +197,10 @@ func (h *UserHandler) GetUserByEmail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to get user", http.StatusInternalServerError)
 		return
 	}
-
+	userResp := models.ToUserResponse(user)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(user)
+	json.NewEncoder(w).Encode(userResp)
 	log.Printf("User retrieved by email: %s", user.Email)
 }
 
@@ -178,30 +210,42 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 
-	var user models.User
-	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
+	var req models.UpdateUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request payload", http.StatusBadRequest)
 		return
 	}
 
-	// Set the ID from the URL path
-	user.ID = id
 
-	if user.ID == "" || user.Name == "" || user.Email == "" {
-		http.Error(w, "ID, name, and email are required", http.StatusBadRequest)
+	if req.Name == "" || req.Email == "" || req.Password == "" {
+        http.Error(w, "Name, email, and password are required", http.StatusBadRequest)
+        return
+    }
+
+	hashedPassword, err := hashPassword(req.Password)
+	if err != nil {
+		log.Printf("Error hashing password: %v", err)
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
 		return
 	}
+	user := &models.User{
+		ID:       id,
+		Name:     req.Name,
+		Email:    req.Email,
+		Password: hashedPassword,
+	}
 
-	err := h.userRepo.UpdateUser(&user)
+	err = h.userRepo.UpdateUser(user)
 	if err != nil {
 		log.Printf("Error updating user: %v", err)
 		http.Error(w, "Failed to update user", http.StatusInternalServerError)
 		return
 	}
 
+	userResp := models.ToUserResponse(user)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(user)
+	json.NewEncoder(w).Encode(userResp)
 	log.Printf("User updated: %s", user.ID)
 }
 
@@ -223,7 +267,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 
-	w.WriteHeader(http.StatusNoContent) // No content response for successful deletion
+	w.WriteHeader(http.StatusNoContent)
 	log.Printf("User deleted: %s", id)
 }
 
