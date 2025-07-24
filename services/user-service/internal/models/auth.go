@@ -1,34 +1,23 @@
+// services/user-service/internal/models/auth.go
 package models
 
-import "time"
-
+// LoginRequest defines the structure for a login request from the client.
+// It uses 'email' as the primary identifier for consistency with GetUserByEmail.
 type LoginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 }
 
-type LoginResponse struct {
-	Token string       `json:"token"`
-	User  UserResponse `json:"user"`
+// RegisterRequest defines the structure for a user registration request from the client.
+type RegisterRequest struct {
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
-type UserResponse struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Email     string    `json:"email"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-func ToUserResponse(user *User) UserResponse {
-	if user == nil {
-		return UserResponse{}
-	}
-	return UserResponse{
-		ID:        user.ID,
-		Name:      user.Name,
-		Email:     user.Email,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
-	}
+// AuthResponse defines the structure for a successful authentication response to the client.
+type AuthResponse struct {
+	Token        string       `json:"token"`
+	User         UserResponse `json:"user"` // Uses the UserResponse DTO from models/user.go
+	ExpiresInSec int64        `json:"expires_in_sec"`
 }
